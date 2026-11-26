@@ -130,13 +130,110 @@
     <div id="dialog" class="dialog-box" onclick="closeDialog()"></div>
   </div>
 
+  <!-- 循環背景音樂 -->
+  <audio id="bgmAudio" src="背景音.wav" loop preload="auto"></audio>
+
   <!-- 背景語音物件 -->
-  <audio id="bgAudio" src="bgm.m4a"></audio>
+  <audio id="bgAudio" src="傀儡花大綱.m4a" preload="auto"></audio>
+
+  <!-- 若要使用自訂點擊音效檔，可將 USE_CUSTOM_CLICK_FILE 改為 true 並填入檔名 -->
+  <audio id="clickSoundAudio" src="點擊音效.wav" preload="auto"></audio>
 
   <script>
     let timer = null;
     let currentPage = 1; // 預設為首頁一 (羅妹號)
+
+    const bgmAudio = document.getElementById('bgmAudio');
     const audio = document.getElementById('bgAudio');
+    const clickSoundAudio = document.getElementById('clickSoundAudio');
+
+    // 音量設定
+    const NORMAL_BGM_VOLUME = 0.6; // 背景音正常音量（60%，可依需求調整 0.0 ~ 1.0）
+    const DUCKED_BGM_VOLUME = 0.05; // 傀儡花大綱.m4a 播放時背景音音量（5%）
+    const CLICK_SFX_VOLUME = 0.1;   // 點擊回饋音效音量（10%）
+    const USE_CUSTOM_CLICK_FILE = false; // 若要改用 clickSoundAudio 檔案，請設為 true
+
+    let webAudioCtx = null;
+    let bgmStarted = false;
+
+    // 初始化背景音正常音量
+    bgmAudio.volume = NORMAL_BGM_VOLUME;
+    clickSoundAudio.volume = CLICK_SFX_VOLUME;
+
+    // 同步背景音音量：若「傀儡花大綱.m4a」正在播放（且未暫停/結束），則切為 5%，否則切回正常音量
+    function syncBgmVolume() {
+      const isNarrationPlaying = !audio.paused && !audio.ended && audio.currentTime > 0;
+      bgmAudio.volume = isNarrationPlaying ? DUCKED_BGM_VOLUME : NORMAL_BGM_VOLUME;
+    }
+
+    // 監聽「傀儡花大綱.m4a」播放狀態變化
+    audio.addEventListener('play', () => {
+      bgmAudio.volume = DUCKED_BGM_VOLUME;
+    });
+    audio.addEventListener('playing', () => {
+      bgmAudio.volume = DUCKED_BGM_VOLUME;
+    });
+    audio.addEventListener('pause', () => {
+      syncBgmVolume();
+    });
+    audio.addEventListener('ended', () => {
+      bgmAudio.volume = NORMAL_BGM_VOLUME;
+    });
+
+    // 嘗試啟動循環播放「背景音.wav」
+    function ensureBgmPlaying() {
+      syncBgmVolume();
+      if (!bgmAudio.paused) {
+        bgmStarted = true;
+        return;
+      }
+      bgmAudio.play().then(() => {
+        bgmStarted = true;
+      }).catch(() => {
+        // 瀏覽器或 iPadOS 阻擋自動播放時，等待使用者互動再觸發
+      });
+    }
+
+    // 播放點擊回饋音效（音量 10%）
+    function playClickFeedback() {
+      if (USE_CUSTOM_CLICK_FILE) {
+        try {
+          clickSoundAudio.volume = CLICK_SFX_VOLUME;
+          clickSoundAudio.currentTime = 0;
+          clickSoundAudio.play().catch(() => {});
+        } catch (_) {}
+        return;
+      }
+
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!webAudioCtx) {
+          webAudioCtx = new AudioCtx();
+        }
+        if (webAudioCtx.state === 'suspended') {
+          webAudioCtx.resume();
+        }
+
+        const now = webAudioCtx.currentTime;
+        const osc = webAudioCtx.createOscillator();
+        const gain = webAudioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(240, now + 0.045);
+
+        // 限制在 10% 音量區間內做淡出，避免爆音
+        gain.gain.setValueAtTime(CLICK_SFX_VOLUME, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+        osc.connect(gain);
+        gain.connect(webAudioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.055);
+      } catch (_) {}
+    }
 
     // 定義各個頁面的背景圖與對應的熱點資料
     const pagesData = {
@@ -229,6 +326,8 @@
         
         path.addEventListener('click', (event) => {
           event.stopPropagation();
+          ensureBgmPlaying();
+          playClickFeedback();
           
           const dialog = document.getElementById('dialog');
           
@@ -238,6 +337,7 @@
             if (!audio.paused) {
               audio.pause();
               audio.currentTime = 0;
+              syncBgmVolume();
             }
             return;
           }
@@ -247,9 +347,15 @@
           // 處理語音播放與打斷機制
           if (!audio.paused) {
             audio.pause();
-            audio.currentTime = 0; 
+            audio.currentTime = 0;
+            syncBgmVolume();
           } else {
-            audio.play().catch(err => console.log("音檔播放需要使用者互動解鎖", err));
+            audio.play().then(() => {
+              syncBgmVolume();
+            }).catch(err => {
+              console.log("音檔播放需要使用者互動解鎖", err);
+              syncBgmVolume();
+            });
           }
 
           if (item.type === "dialog" || item.type === "guide") {
@@ -313,10 +419,18 @@
       }
     }
 
-    // 網頁載入時預設顯示首頁一
+    // 網頁載入時預設顯示首頁一，並嘗試啟動背景音樂
     window.onload = function() {
       renderPage(1);
+      ensureBgmPlaying();
     };
+
+    // 若載入當下被瀏覽器阻擋自動播放，使用者首次點擊頁面任何地方時啟動背景音樂
+    document.addEventListener('pointerdown', () => {
+      if (!bgmStarted) {
+        ensureBgmPlaying();
+      }
+    }, { once: true });
   </script>
 
 </body>
