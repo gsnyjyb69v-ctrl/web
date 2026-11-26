@@ -247,10 +247,83 @@
     <div id="dialog" class="dialog-box" onclick="closeDialog()"></div>
   </div>
 
+  <!-- 循環背景音樂 -->
+  <audio id="bgmAudio" src="背景音.wav" loop preload="auto"></audio>
+
+  <!-- 若要改用自訂點擊音效檔，可將 USE_CUSTOM_CLICK_FILE 設為 true 並填入檔名 -->
+  <audio id="clickSoundAudio" src="點擊音效.wav" preload="auto"></audio>
+
   <script>
     let timer = null;
+    const bgmAudio = document.getElementById('bgmAudio');
+    const clickSoundAudio = document.getElementById('clickSoundAudio');
+
+    const BGM_VOLUME = 0.6; // 背景音音量（60%，可依需求調整 0.0 ~ 1.0）
+    const CLICK_SFX_VOLUME = 0.1; // 點擊回饋音效音量（10%）
+    const USE_CUSTOM_CLICK_FILE = false; // 若要改用外部點擊音效檔請設為 true
+
+    let webAudioCtx = null;
+    let bgmStarted = false;
+
+    bgmAudio.volume = BGM_VOLUME;
+    clickSoundAudio.volume = CLICK_SFX_VOLUME;
+
+    function ensureBgmPlaying() {
+      bgmAudio.volume = BGM_VOLUME;
+      if (!bgmAudio.paused) {
+        bgmStarted = true;
+        return;
+      }
+      bgmAudio.play().then(() => {
+        bgmStarted = true;
+      }).catch(() => {
+        // 等待使用者互動解鎖播放
+      });
+    }
+
+    function playClickFeedback() {
+      if (USE_CUSTOM_CLICK_FILE) {
+        try {
+          clickSoundAudio.volume = CLICK_SFX_VOLUME;
+          clickSoundAudio.currentTime = 0;
+          clickSoundAudio.play().catch(() => {});
+        } catch (_) {}
+        return;
+      }
+
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!webAudioCtx) {
+          webAudioCtx = new AudioCtx();
+        }
+        if (webAudioCtx.state === 'suspended') {
+          webAudioCtx.resume();
+        }
+
+        const now = webAudioCtx.currentTime;
+        const osc = webAudioCtx.createOscillator();
+        const gain = webAudioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(240, now + 0.045);
+
+        gain.gain.setValueAtTime(CLICK_SFX_VOLUME, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+        osc.connect(gain);
+        gain.connect(webAudioCtx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.055);
+      } catch (_) {}
+    }
 
     function handleClick(event, element) {
+      ensureBgmPlaying();
+      playClickFeedback();
+
       const text = element.getAttribute('data-text');
       showDialog(text);
 
@@ -298,8 +371,20 @@
 
     // 主頁按鈕點擊事件：跳轉至首頁
     function handleHomeClick() {
+      ensureBgmPlaying();
+      playClickFeedback();
       window.location.href = 'index.html';
     }
+
+    window.addEventListener('load', () => {
+      ensureBgmPlaying();
+    });
+
+    document.addEventListener('pointerdown', () => {
+      if (!bgmStarted) {
+        ensureBgmPlaying();
+      }
+    }, { once: true });
   </script>
 
 </body>
